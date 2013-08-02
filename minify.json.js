@@ -1,61 +1,120 @@
-/*! JSON.minify()
-	v0.1 (c) Kyle Simpson
-	MIT License
-*/
-
 (function(global){
-	if (typeof global.JSON == "undefined" || !global.JSON) {
-		global.JSON = {};
-	}
-	
-	global.JSON.minify = function(json) {
-		
-		var tokenizer = /"|(\/\*)|(\*\/)|(\/\/)|\n|\r/g,
-			in_string = false,
-			in_multiline_comment = false,
-			in_singleline_comment = false,
-			tmp, tmp2, new_str = [], ns = 0, from = 0, lc, rc
-		;
-		
-		tokenizer.lastIndex = 0;
-		
-		while (tmp = tokenizer.exec(json)) {
-			lc = RegExp.leftContext;
-			rc = RegExp.rightContext;
-			if (!in_multiline_comment && !in_singleline_comment) {
-				tmp2 = lc.substring(from);
-				if (!in_string) {
-					tmp2 = tmp2.replace(/(\n|\r|\s)*/g,"");
-				}
-				new_str[ns++] = tmp2;
-			}
-			from = tokenizer.lastIndex;
-			
-			if (tmp[0] == "\"" && !in_multiline_comment && !in_singleline_comment) {
-				tmp2 = lc.match(/(\\)*$/);
-				if (!in_string || !tmp2 || (tmp2[0].length % 2) == 0) {	// start of string with ", or unescaped " character found to end string
-					in_string = !in_string;
-				}
-				from--; // include " character in next catch
-				rc = json.substring(from);
-			}
-			else if (tmp[0] == "/*" && !in_string && !in_multiline_comment && !in_singleline_comment) {
-				in_multiline_comment = true;
-			}
-			else if (tmp[0] == "*/" && !in_string && in_multiline_comment && !in_singleline_comment) {
-				in_multiline_comment = false;
-			}
-			else if (tmp[0] == "//" && !in_string && !in_multiline_comment && !in_singleline_comment) {
-				in_singleline_comment = true;
-			}
-			else if ((tmp[0] == "\n" || tmp[0] == "\r") && !in_string && !in_multiline_comment && in_singleline_comment) {
-				in_singleline_comment = false;
-			}
-			else if (!in_multiline_comment && !in_singleline_comment && !(/\n|\r|\s/.test(tmp[0]))) {
-				new_str[ns++] = tmp[0];
-			}
-		}
-		new_str[ns++] = rc;
-		return new_str.join("");
-	};
+    if (typeof global.JSON == "undefined" || !global.JSON) {
+        global.JSON = {};
+    }
+    var PARSER_STATE = {
+        WHITESPACE: 0,
+        NON_WHITESPACE: 1,
+        SINGLE_SLASH: 2,
+        SINGLE_SLASH_AFTER_WHITESPACE: 3,
+        MULTI_LINE_COMMENT: 4,
+        MULTI_LINE_COMMENT_STAR : 5,
+        SINGLE_LINE_COMMENT:6,
+        IN_STRING : 7,
+        ESCAPE_CHAR_IN_STRING: 8
+    }
+    global.JSON.minify = function(json) {
+        var state = PARSER_STATE.WHITESPACE,
+            index,
+            length = json.length,
+            char,
+            copyStart = 0,
+            minified = "";
+
+        for(index = 0; index < length; index++) {
+            char = json[index];
+            switch(state) {
+            case PARSER_STATE.WHITESPACE:
+                if(char !== ' ' && char !== '\n' && char !== '\r' && char !== '\t') {
+                    copyStart = index;
+                    if(char === '/') {
+                        state = PARSER_STATE.SINGLE_SLASH_AFTER_WHITESPACE;
+                    } else if(char === '"'|| char === '\'') {
+                        state = PARSER_STATE.IN_STRING;
+                    } else {
+                        state = PARSER_STATE.NON_WHITESPACE;
+                    }
+                }
+                break;
+            case PARSER_STATE.NON_WHITESPACE:
+                if(char !== ' ' && char !== '\n' && char !== '\r' && char !== '\t') {
+                    if(char === '/') {
+                        state = PARSER_STATE.SINGLE_SLASH;
+                    } else if(char === '"'|| char === '\'') {
+                        state = PARSER_STATE.IN_STRING;
+                    } else {
+                        state = PARSER_STATE.NON_WHITESPACE;
+                    }
+                } else {
+                    minified += json.substr(copyStart, index - copyStart);
+                    state = PARSER_STATE.WHITESPACE;
+                }
+                break;
+            case PARSER_STATE.SINGLE_SLASH:
+                if(char === '*') {
+                    minified += json.substr(copyStart, index - copyStart - 1);
+                    state = PARSER_STATE.MULTI_LINE_COMMENT;
+                } else if (char === '/') {
+                    minified += json.substr(copyStart, index - copyStart - 1);
+                    state = PARSER_STATE.SINGLE_LINE_COMMENT;
+                } else if(char === '"'|| char === '\'') {
+                    state = PARSER_STATE.IN_STRING;
+                } else if(char !== ' ' && char !== '\n' && char !== '\r' && char !== '\t') {
+                    state = PARSER_STATE.NON_WHITESPACE;
+                } else {
+                    minified += json.substr(copyStart, index - copyStart);
+                    state = PARSER_STATE.WHITESPACE;
+                }
+                break;
+
+            case PARSER_STATE.SINGLE_SLASH_AFTER_WHITESPACE:
+                if(char === '*') {
+                    state = PARSER_STATE.MULTI_LINE_COMMENT;
+                } else if (char === '/') {
+                    state = PARSER_STATE.SINGLE_LINE_COMMENT;
+                } else if(char === '"'|| char === '\'') {
+                    state = PARSER_STATE.IN_STRING;
+                } else if(char !== ' ' && char !== '\n' && char !== '\r' && char !== '\t') {
+                    state = PARSER_STATE.NON_WHITESPACE;
+                } else {
+                    minified += json.substr(copyStart, index - copyStart);
+                    state = PARSER_STATE.WHITESPACE;
+                }
+                break;
+
+            case PARSER_STATE.MULTI_LINE_COMMENT:
+                if(char === '*') {
+                    state = PARSER_STATE.MULTI_LINE_COMMENT_STAR;
+                }
+                break;
+            case PARSER_STATE.MULTI_LINE_COMMENT_STAR:
+                if(char === '/') {
+                    state = PARSER_STATE.WHITESPACE;
+                } else {
+                    state = PARSER_STATE.MULTI_LINE_COMMENT;
+                }
+                break;
+            case PARSER_STATE.SINGLE_LINE_COMMENT:
+                if(char === '\n' || char === '\r') {
+                    state = PARSER_STATE.WHITESPACE;
+                }
+                break;
+            case PARSER_STATE.IN_STRING:
+                if(char === '"' || char === '\'') {
+                    state = PARSER_STATE.NON_WHITESPACE;
+                } else if(char === '\\') {
+                    state = PARSER_STATE.ESCAPE_CHAR_IN_STRING;
+                }
+                break;
+            case PARSER_STATE.ESCAPE_CHAR_IN_STRING:
+                state = PARSER_STATE.IN_STRING;
+                break;
+            }
+        }
+        if(state === PARSER_STATE.NON_WHITESPACE) {
+            minified += json.substr(copyStart);
+        }
+        return minified;
+
+    };
 })(this);
